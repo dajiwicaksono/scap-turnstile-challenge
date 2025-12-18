@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <title>Verify</title>
+</head>
+<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui">
+  <div style="text-align:center">
+    <div style="margin-bottom:12px">Verify you are human</div>
+
+    <div class="cf-turnstile"
+      data-sitekey="__TURNSTILE_SITE_KEY__"
+      data-callback="onSuccess"></div>
+
+    <div id="msg" style="margin-top:12px;font-size:12px;opacity:.7"></div>
+  </div>
+
+  <script>
+    function onSuccess(token) {
+      const p = new URLSearchParams(location.search);
+      const mode = p.get("mode") || "web";
+      const returnOrigin = p.get("returnOrigin") || "";
+
+      // Flutter
+      if (mode === "flutter") {
+        location.href = "scap://turnstile?token=" + encodeURIComponent(token);
+        return;
+      }
+
+      // Web popup
+      if (window.opener && returnOrigin) {
+        window.opener.postMessage({ token }, returnOrigin);
+        window.close();
+        return;
+      }
+
+      document.getElementById("msg").textContent = "Verified. You can close this window.";
+    }
+  </script>
+</body>
+</html>
