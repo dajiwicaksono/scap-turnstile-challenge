@@ -3,39 +3,68 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-  <title>Verify</title>
+  <title>SCAP Verification</title>
 </head>
-<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui">
-  <div style="text-align:center">
-    <div style="margin-bottom:12px">Verify you are human</div>
 
-    <div class="cf-turnstile"
+<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#fff">
+  <div style="text-align:center;max-width:320px;padding:24px">
+    <div style="font-size:16px;margin-bottom:12px">Verify you are human</div>
+
+    <div
+      class="cf-turnstile"
       data-sitekey="0x4AAAAAACHVERcLPjZkdqKV"
-      data-callback="onSuccess"></div>
+      data-callback="onSuccess"
+      data-error-callback="onError"
+      data-expired-callback="onExpired"
+    ></div>
 
-    <div id="msg" style="margin-top:12px;font-size:12px;opacity:.7"></div>
+    <div id="msg" style="margin-top:12px;font-size:12px;opacity:.75"></div>
   </div>
 
   <script>
+    function setMsg(text) {
+      var el = document.getElementById("msg");
+      if (el) el.textContent = text || "";
+    }
+
+    function onError() {
+      setMsg("Verification error. Please refresh and try again.");
+    }
+
+    function onExpired() {
+      setMsg("Verification expired. Please try again.");
+    }
+
     function onSuccess(token) {
       const p = new URLSearchParams(location.search);
       const mode = p.get("mode") || "web";
       const returnOrigin = p.get("returnOrigin") || "";
+      const state = p.get("state") || "";
 
-      // Flutter
+      // ===== Flutter mode: deep link back to app =====
       if (mode === "flutter") {
-        location.href = "scap://turnstile?token=" + encodeURIComponent(token);
+        location.href =
+          "scap://turnstile?token=" + encodeURIComponent(token) +
+          "&state=" + encodeURIComponent(state);
         return;
       }
 
-      // Web popup
+      // ===== Web popup mode: postMessage back to opener & auto-close =====
       if (window.opener && returnOrigin) {
-        window.opener.postMessage({ token }, returnOrigin);
-        window.close();
+        try {
+          window.opener.postMessage({ token, state }, returnOrigin);
+        } catch (e) {}
+
+        // auto close - only works if opened by window.open()
+        setTimeout(() => window.close(), 50);
+
+        // fallback message if browser blocks close
+        setTimeout(() => setMsg("Verified. Please close this window."), 300);
         return;
       }
 
-      document.getElementById("msg").textContent = "Verified. You can close this window.";
+      // ===== Fallback (opened manually) =====
+      setMsg("Verified. You can close this window.");
     }
   </script>
 </body>
