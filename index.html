@@ -1,14 +1,36 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>SCAP Verification</title>
+
+  <!-- Cloudflare Turnstile -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#fff; }
+    .wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .card { width:100%; max-width:360px; border:1px solid #eee; border-radius:16px; padding:20px; box-shadow:0 6px 20px rgba(0,0,0,.06); }
+    .title { font-size:16px; font-weight:600; margin:0 0 10px; }
+    .sub { font-size:12px; opacity:.75; margin:0 0 14px; line-height:1.35; }
+    .msg { margin-top:12px; font-size:12px; opacity:.8; white-space:pre-wrap; }
+    .btn {
+      display:none; margin-top:14px; width:100%; padding:12px 14px; border:0;
+      border-radius:12px; background:#111; color:#fff; font-weight:600; cursor:pointer;
+    }
+    .btn.secondary { background:#f2f2f2; color:#111; }
+    .row { display:flex; gap:10px; }
+  </style>
 </head>
 
-<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#fff">
-  <div style="text-align:center;max-width:320px;padding:24px">
-    <div style="font-size:16px;margin-bottom:12px">Verify you are human</div>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="title">Verify you are human</div>
+    <div class="sub" id="subtitle">
+      Please complete the verification below.
+    </div>
 
     <div
       class="cf-turnstile"
@@ -18,54 +40,220 @@
       data-expired-callback="onExpired"
     ></div>
 
-    <div id="msg" style="margin-top:12px;font-size:12px;opacity:.75"></div>
+    <div class="msg" id="msg"></div>
+
+    <div class="row">
+      <button id="btnBackToApp" class="btn">Back to app</button>
+      <button id="btnClose" class="btn secondary">Close</button>
+    </div>
   </div>
+</div>
 
-  <script>
-    function setMsg(text) {
-      var el = document.getElementById("msg");
-      if (el) el.textContent = text || "";
+<script>
+  // ===========================
+  // Helpers
+  // ===========================
+  function qs() { return new URLSearchParams(location.search); }
+  function setMsg(text) {
+    var el = document.getElementById("msg");
+    if (el) el.textContent = text || "";
+  }
+  function show(elId, yes) {
+    var el = document.getElementById(elId);
+    if (!el) return;
+    el.style.display = yes ? "block" : "none";
+  }
+  function safeOrigin(origin) {
+    // only allow http(s) origins for postMessage
+    if (!origin) return "";
+    try {
+      var u = new URL(origin);
+      if (u.protocol === "http:" || u.protocol === "https:") return u.origin;
+      return "";
+    } catch (_) { return ""; }
+  }
+  function safeReturnUrl(url) {
+    // returnUrl MUST be https for Universal Link / App Link
+    if (!url) return "";
+    try {
+      var u = new URL(url);
+      if (u.protocol === "https:") return u.toString();
+      return "";
+    } catch (_) { return ""; }
+  }
+
+  // ===========================
+  // Config from query
+  // ===========================
+  var p = qs();
+  var mode = (p.get("mode") || "web").toLowerCase(); // "web" | "mobile"
+  var state = p.get("state") || "";
+  var returnOrigin = safeOrigin(p.get("returnOrigin") || ""); // web popup
+  var returnUrl = safeReturnUrl(p.get("returnUrl") || "");    // mobile app link callback
+  var deepLinkFallback = p.get("deepLink") || "";             // optional custom scheme fallback (scap://...)
+
+  // UI hints
+  var subtitle = document.getElementById("subtitle");
+  if (mode === "mobile") {
+    subtitle.textContent = "After verification, we will return you to the app.";
+  } else {
+    subtitle.textContent = "After verification, this window will close automatically.";
+  }
+
+  // basic validation
+  if (!state) {
+    setMsg("Missing state. Please reopen this page from the app/website.");
+  }
+
+  // Buttons
+  document.getElementById("btnClose").onclick = function () {
+    try { window.close(); } catch (_) {}
+    setMsg("You can close this tab/window.");
+  };
+
+  document.getElementById("btnBackToApp").onclick = function () {
+    // Prefer https returnUrl (App Link / Universal Link)
+    if (returnUrl) {
+      location.href = appendTokenAndState(returnUrl, lastToken, state);
+      return;
+    }
+    // Fallback to custom scheme if provided
+    if (deepLinkFallback) {
+      location.href = appendTokenAndState(deepLinkFallback, lastToken, state);
+      return;
+    }
+    setMsg("No returnUrl/deepLink provided by server.");
+  };
+
+  function appendTokenAndState(base, token, state) {
+    try {
+      // If base is a custom scheme (scap://...), URL() may fail in some browsers.
+      // We'll handle both http(s) and custom scheme.
+      if (/^https?:\/\//i.test(base)) {
+        var u = new URL(base);
+        if (token) u.searchParams.set("token", token);
+        if (state) u.searchParams.set("state", state);
+        return u.toString();
+      } else {
+        // naive append for custom scheme
+        var sep = base.includes("?") ? "&" : "?";
+        var out = base;
+        if (token) out += sep + "token=" + encodeURIComponent(token);
+        if (state) out += (out.includes("?") ? "&" : "?") + "state=" + encodeURIComponent(state);
+        return out;
+      }
+    } catch (_) {
+      // fallback
+      var sep2 = base.includes("?") ? "&" : "?";
+      var out2 = base;
+      if (token) out2 += sep2 + "token=" + encodeURIComponent(token);
+      if (state) out2 += (out2.includes("?") ? "&" : "?") + "state=" + encodeURIComponent(state);
+      return out2;
+    }
+  }
+
+  function onError() {
+    setMsg("Verification error. Please refresh and try again.");
+  }
+
+  function onExpired() {
+    setMsg("Verification expired. Please try again.");
+  }
+
+  var lastToken = "";
+
+  function onSuccess(token) {
+    lastToken = token || "";
+    if (!lastToken) {
+      setMsg("Verification succeeded but token is empty. Please retry.");
+      return;
+    }
+    if (!state) {
+      setMsg("Verification succeeded but state is missing. Please reopen from app/website.");
+      // still show fallback so user can do something
+      show("btnBackToApp", true);
+      show("btnClose", true);
+      return;
     }
 
-    function onError() {
-      setMsg("Verification error. Please refresh and try again.");
-    }
+    // ===========================
+    // MODE: MOBILE (App Link / Universal Link)
+    // ===========================
+    if (mode === "mobile") {
+      setMsg("Verified. Returning to app...");
 
-    function onExpired() {
-      setMsg("Verification expired. Please try again.");
-    }
+      // Prefer https returnUrl (App Link/Universal Link)
+      if (returnUrl) {
+        var url = appendTokenAndState(returnUrl, lastToken, state);
 
-    function onSuccess(token) {
-      const p = new URLSearchParams(location.search);
-      const mode = p.get("mode") || "web";
-      const returnOrigin = p.get("returnOrigin") || "";
-      const state = p.get("state") || "";
+        // Attempt redirect to app
+        location.href = url;
 
-      // ===== Flutter mode: deep link back to app =====
-      if (mode === "flutter") {
-        location.href =
-          "scap://turnstile?token=" + encodeURIComponent(token) +
-          "&state=" + encodeURIComponent(state);
+        // Fallback UI if app not opened (user stays on page)
+        setTimeout(function () {
+          setMsg(
+            "If you were not redirected to the app, tap the button below.\n" +
+            "State: " + state
+          );
+          show("btnBackToApp", true);
+          show("btnClose", true);
+        }, 900);
+
         return;
       }
 
-      // ===== Web popup mode: postMessage back to opener & auto-close =====
-      if (window.opener && returnOrigin) {
-        try {
-          window.opener.postMessage({ token, state }, returnOrigin);
-        } catch (e) {}
+      // Optional fallback to custom deep link if server also provides it
+      if (deepLinkFallback) {
+        var dl = appendTokenAndState(deepLinkFallback, lastToken, state);
+        location.href = dl;
 
-        // auto close - only works if opened by window.open()
-        setTimeout(() => window.close(), 50);
+        setTimeout(function () {
+          setMsg("If the app didn't open, tap Back to app.");
+          show("btnBackToApp", true);
+          show("btnClose", true);
+        }, 900);
 
-        // fallback message if browser blocks close
-        setTimeout(() => setMsg("Verified. Please close this window."), 300);
         return;
       }
 
-      // ===== Fallback (opened manually) =====
-      setMsg("Verified. You can close this window.");
+      setMsg("Verified, but missing returnUrl. Please reopen from app.");
+      show("btnClose", true);
+      return;
     }
-  </script>
+
+    // ===========================
+    // MODE: WEB (Popup postMessage)
+    // ===========================
+    if (window.opener && returnOrigin) {
+      try {
+        window.opener.postMessage({ token: lastToken, state: state }, returnOrigin);
+      } catch (e) {}
+
+      // Close if possible
+      setTimeout(function () {
+        try { window.close(); } catch (_) {}
+      }, 50);
+
+      // Fallback UI if browser blocks close
+      setTimeout(function () {
+        setMsg("Verified. You can close this window.");
+        show("btnClose", true);
+      }, 350);
+
+      return;
+    }
+
+    // ===========================
+    // Fallback (opened manually)
+    // ===========================
+    setMsg("Verified. You can close this window.");
+    show("btnClose", true);
+  }
+
+  // Expose callbacks for Turnstile
+  window.onSuccess = onSuccess;
+  window.onError = onError;
+  window.onExpired = onExpired;
+</script>
 </body>
 </html>
